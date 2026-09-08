@@ -1,0 +1,29 @@
+display_information:
+  name: Jeen Slack Listener
+  description: Per-user Slack access for Jeen Langflow agents
+  background_color: "#4A154B"
+features:
+  bot_user:
+    display_name: Jeen Slack Listener
+    always_online: false
+oauth_config:
+  redirect_urls:
+    - http://localhost:8765/callback
+  scopes:
+    user:
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - users:read
+      - users:read.email
+    bot:
+      - channels:history
+      - channels:read
+      - channels:join
+      - groups:read
+      - users:read
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
