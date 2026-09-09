@@ -1,13 +1,13 @@
 """Jeen Slack per-user connect app.
 
 Each person opens /connect, signs in with Slack, and we store their xoxp token.
-The Langflow Slack tool later asks /token?email=... for that person's token.
+The Langflow Slack tool reads that token from Jeen Postgres by email.
 
 Run:
   export SLACK_CLIENT_ID=...
   export SLACK_CLIENT_SECRET=...
   export SLACK_REDIRECT_URI=http://localhost:8765/callback
-  export TOKEN_LOOKUP_SECRET=change-me
+  export DATABASE_URL=postgresql://user:pass@host:5432/dbname
   python3 app.py
 
 Create the Slack app from slack_manifest.yaml at https://api.slack.com/apps
@@ -31,6 +31,7 @@ if str(HERE) not in sys.path:
 
 from oauth import (
     DEFAULT_USER_SCOPES,
+    PostgresTokenStore,
     SLACK_OAUTH_ACCESS_URL,
     SlackOAuthConfig,
     SlackOAuthError,
@@ -47,6 +48,18 @@ PENDING_STATES: set[str] = set()
 
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
+
+
+def load_token_store():
+    dsn = _env("DATABASE_URL")
+    if dsn:
+        return PostgresTokenStore(dsn)
+    if _env("ALLOW_FILE_TOKEN_STORE") == "1":
+        return TokenStore(TOKEN_FILE)
+    raise SlackOAuthError(
+        "DATABASE_URL is required. Set it to Jeen Postgres, or set "
+        "ALLOW_FILE_TOKEN_STORE=1 for a local tokens.json fallback."
+    )
 
 
 def load_config() -> SlackOAuthConfig:
@@ -177,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
                 email = slack_user_email(
                     parsed_token["access_token"], parsed_token["slack_user_id"]
                 )
-                TokenStore(TOKEN_FILE).save(
+                load_token_store().save(
                     email=email,
                     slack_user_id=parsed_token["slack_user_id"],
                     access_token=parsed_token["access_token"],
@@ -201,7 +214,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(401, {"error": "Unauthorized token lookup"})
                 return
             email = (query.get("email") or [""])[0]
-            found = TokenStore(TOKEN_FILE).get_by_email(email)
+            found = load_token_store().get_by_email(email)
             if not found:
                 self._send_json(404, {"error": f"No Slack token for {email}. Open /connect."})
                 return
@@ -220,9 +233,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    # Render injects PORT; bind all interfaces there so the public URL works.
+    host = _env("HOST", "127.0.0.1")
     port = int(_env("PORT") or "8765")
-    host = _env("HOST") or ("0.0.0.0" if _env("PORT") else "127.0.0.1")
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Jeen Slack connect app on http://{host}:{port}/connect")
     server.serve_forever()

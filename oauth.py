@@ -116,3 +116,76 @@ class TokenStore:
             return None
         found = self._load()["tokens"].get(key)
         return found if isinstance(found, dict) else None
+
+
+UPSERT_SQL = """
+INSERT INTO slack_user_tokens (email, slack_user_id, access_token, updated_at)
+VALUES (%s, %s, %s, NOW())
+ON CONFLICT (email) DO UPDATE SET
+  slack_user_id = EXCLUDED.slack_user_id,
+  access_token = EXCLUDED.access_token,
+  updated_at = NOW()
+"""
+SELECT_SQL = (
+    "SELECT email, slack_user_id, access_token FROM slack_user_tokens WHERE email = %s"
+)
+
+
+def _require_xoxp(access_token: str) -> str:
+    token = (access_token or "").strip()
+    if not token.startswith("xoxp-"):
+        raise SlackOAuthError("Slack user token must start with xoxp-.")
+    return token
+
+
+def _psycopg_connect(dsn: str):
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise SlackOAuthError(
+            "psycopg is required when DATABASE_URL is set. pip install psycopg[binary]"
+        ) from exc
+    return psycopg.connect(dsn)
+
+
+class PostgresTokenStore:
+    """Jeen Postgres table slack_user_tokens. Inject connect= for tests."""
+
+    def __init__(self, dsn: str, connect=None):
+        self.dsn = (dsn or "").strip()
+        if not self.dsn:
+            raise SlackOAuthError("DATABASE_URL is empty.")
+        self._connect = connect or _psycopg_connect
+
+    def save(self, email: str, slack_user_id: str, access_token: str) -> None:
+        key = (email or "").strip().lower()
+        if not key:
+            raise SlackOAuthError("Cannot store a Slack token without an email.")
+        token = _require_xoxp(access_token)
+        user_id = (slack_user_id or "").strip()
+        if not user_id:
+            raise SlackOAuthError("Cannot store a Slack token without a Slack user id.")
+        with self._connect(self.dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(UPSERT_SQL, (key, user_id, token))
+            conn.commit()
+
+    def get_by_email(self, email: str) -> dict | None:
+        key = (email or "").strip().lower()
+        if not key:
+            return None
+        with self._connect(self.dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(SELECT_SQL, (key,))
+                row = cur.fetchone()
+        if not row:
+            return None
+        found_email, slack_user_id, access_token = row[0], row[1], row[2]
+        token = str(access_token or "").strip()
+        if not token.startswith("xoxp-"):
+            return None
+        return {
+            "email": str(found_email or key).strip().lower(),
+            "slack_user_id": str(slack_user_id or ""),
+            "access_token": token,
+        }

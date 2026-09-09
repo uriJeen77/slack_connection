@@ -34,3 +34,20 @@ Open http://localhost:8765/connect
 
 Do not commit `.env` or `tokens.json`. Render disk is ephemeral; tokens can
 disappear on redeploy until you store them in a database.
+
+
+## Postgres
+
+Set `DATABASE_URL` to Jeen Postgres. Run `schema.sql` once:
+
+```sql
+CREATE TABLE IF NOT EXISTS slack_user_tokens (
+  email          TEXT PRIMARY KEY,
+  slack_user_id  TEXT NOT NULL,
+  access_token   TEXT NOT NULL,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+Render `/callback` upserts the row. Langflow reads the same table by email.
+Local without Postgres: `ALLOW_FILE_TOKEN_STORE=1`.
